@@ -88,6 +88,7 @@ var Griddle = React.createClass({
             "noDataMessage":"There is no data to display.",
             "noDataClassName": "griddle-nodata",
             "customNoDataComponent": null,
+            "allowEmptyGrid": false,
             "showTableHeading":true,
             "showPager":true,
             "useFixedHeader":false,
@@ -129,9 +130,9 @@ var Griddle = React.createClass({
             "settingsIconComponent": "",
             "nextIconComponent": "",
             "previousIconComponent":"",
-			"isMultipleSelection": false, //currently does not support subgrids
+            "isMultipleSelection": false, //currently does not support subgrids
             "selectedRowIds": [],
-			"uniqueIdentifier": "id"
+            "uniqueIdentifier": "id"
         };
     },
     propTypes: {
@@ -249,14 +250,27 @@ var Griddle = React.createClass({
             showColumnChooser: !this.state.showColumnChooser
         });
     },
+    isNullOrUndefined: function(value) {
+      return (value === undefined || value === null)
+    },
+    shouldUseCustomRowComponent: function() {
+      return this.isNullOrUndefined(this.state.useCustomRowComponent) ?
+        this.props.useCustomRowComponent :
+        this.state.useCustomRowComponent
+    },
+    shouldUseCustomGridComponent: function() {
+      return this.isNullOrUndefined(this.state.useCustomGridComponent) ?
+        this.props.useCustomGridComponent :
+        this.state.useCustomGridComponent
+    },
     toggleCustomComponent: function(){
         if(this.state.customComponentType === "grid"){
-            this.setProps({
-                useCustomGridComponent: !this.props.useCustomGridComponent
+            this.setState({
+                useCustomGridComponent: !this.shouldUseCustomGridComponent()
             });
         } else if(this.state.customComponentType === "row"){
-            this.setProps({
-                useCustomRowComponent: !this.props.useCustomRowComponent
+            this.setState({
+                useCustomRowComponent: !this.shouldUseCustomRowComponent()
             });
         }
     },
@@ -346,7 +360,8 @@ var Griddle = React.createClass({
     },
     componentWillReceiveProps: function(nextProps) {
         this.setMaxPage(nextProps.results);
-
+	//This will updaet the column Metadata
+	this.columnSettings.columnMetadata = nextProps.columnMetadata;
         if(nextProps.results.length > 0)
         {
             var deepKeys = deep.keys(nextProps.results[0]);
@@ -420,11 +435,11 @@ var Griddle = React.createClass({
         this.setMaxPage();
 
         //don't like the magic strings
-        if(this.props.useCustomGridComponent === true){
+        if(this.shouldUseCustomGridComponent()){
             this.setState({
                  customComponentType: "grid"
             });
-        } else if(this.props.useCustomRowComponent === true){
+        } else if(this.shouldUseCustomRowComponent()){
             this.setState({
                 customComponentType: "row"
             });
@@ -464,6 +479,7 @@ var Griddle = React.createClass({
             }
         }
     },
+    //TODO: Do this with propTypes
     verifyCustom: function(){
         if(this.props.useCustomGridComponent === true && this.props.customGridComponent === null){
             console.error("useCustomGridComponent is set to true but no custom component was specified.")
@@ -485,13 +501,29 @@ var Griddle = React.createClass({
         var that = this;
             //get the correct page size
             if(this.state.sortColumn !== "" || this.props.initialSort !== ""){
-                var sortProperty = _filter(this.props.columnMetadata, {columnName: this.state.sortColumn});
-                sortProperty = (sortProperty.length > 0 && sortProperty[0].hasOwnProperty("sortProperty") && sortProperty[0]["sortProperty"]) || null;
+                var sortColumn = _filter(this.props.columnMetadata, {columnName: this.state.sortColumn});
+                var sortProperty = sortColumn.length > 0 && sortColumn[0].hasOwnProperty("sortProperty") && sortColumn[0]["sortProperty"] || null;
+                // for underscore-style sortBy method (with 1 argument)
+                var compare = sortColumn.length > 0 && sortColumn[0].hasOwnProperty("compare") && sortColumn[0]["compare"] || null;
+                // for standard JS sort method (with 2 arguments)
+                var compare2 = sortColumn.length > 0 && sortColumn[0].hasOwnProperty("compare2") && sortColumn[0]["compare2"] || null;
+                var column = that.state.sortColumn || that.props.initialSort;
 
-                data = sortBy(data, function(item){
-                    return sortProperty ? deep.getAt( item, that.state.sortColumn||that.props.initialSort )[sortProperty] :
-                        deep.getAt( item, that.state.sortColumn||that.props.initialSort );
-                });
+                if(compare2){
+                    data = data.sort(function (a, b) {
+                        return compare2(deep.getAt(a, column), deep.getAt(b, column));
+                    });
+                } else {
+                    data = sortBy(data, function (item) {
+                        if(sortProperty){
+                            return deep.getAt(item, column)[sortProperty];
+                        } else if(compare){
+                            return compare(deep.getAt(item, column));
+                        } else {
+                            return deep.getAt(item, column);
+                        }
+                    });
+                }
 
                 if(this.state.sortAscending === false){
                     data.reverse();
@@ -687,7 +719,7 @@ var Griddle = React.createClass({
         };
     },
     getFilter: function(){
-     return ((this.props.showFilter && this.props.useCustomGridComponent === false) ?
+     return ((this.props.showFilter && this.shouldUseCustomGridComponent() === false) ?
         ( this.props.useCustomFilterComponent ?
          <CustomFilterContainer changeFilter={this.setFilter} placeholderText={this.props.filterPlaceholderText} customFilterComponent={this.props.customFilterComponent} results={this.props.results} currentResults={this.getCurrentResults()} /> :
          <GridFilter changeFilter={this.setFilter} placeholderText={this.props.filterPlaceholderText} />) :
@@ -728,7 +760,7 @@ var Griddle = React.createClass({
         </div>);
     },
     getPagingSection: function(currentPage, maxPage){
-        if ((this.props.showPager && !this.isInfiniteScrollEnabled() && !this.props.useCustomGridComponent) === false) {
+        if ((this.props.showPager && !this.isInfiniteScrollEnabled() && !this.shouldUseCustomGridComponent()) === false) {
             return undefined;
         }
 
@@ -745,8 +777,8 @@ var Griddle = React.createClass({
         return this.state.showColumnChooser ? (
             <GridSettings columns={keys} selectedColumns={cols} setColumns={this.setColumns} settingsText={this.props.settingsText}
              settingsIconComponent={this.props.settingsIconComponent} maxRowsText={this.props.maxRowsText} setPageSize={this.setPageSize}
-             showSetPageSize={!this.props.useCustomGridComponent} resultsPerPage={this.state.resultsPerPage} enableToggleCustom={this.props.enableToggleCustom}
-             toggleCustomComponent={this.toggleCustomComponent} useCustomComponent={this.props.useCustomRowComponent || this.props.useCustomGridComponent}
+             showSetPageSize={!this.shouldUseCustomGridComponent()} resultsPerPage={this.state.resultsPerPage} enableToggleCustom={this.props.enableToggleCustom}
+             toggleCustomComponent={this.toggleCustomComponent} useCustomComponent={this.shouldUseCustomRowComponent() || this.shouldUseCustomGridComponent()}
              useGriddleStyles={this.props.useGriddleStyles} enableCustomFormatText={this.props.enableCustomFormatText} columnMetadata={this.props.columnMetadata} />
         ) : "";
     },
@@ -799,9 +831,9 @@ var Griddle = React.createClass({
                 onRowClick={this.props.onRowClick}/></div>)
     },
     getContentSection: function(data, cols, meta, pagingContent, hasMorePages, globalData){
-        if(this.props.useCustomGridComponent && this.props.customGridComponent !== null){
+        if(this.shouldUseCustomGridComponent() && this.props.customGridComponent !== null){
            return this.getCustomGridSection();
-        } else if(this.props.useCustomRowComponent){
+        } else if(this.shouldUseCustomRowComponent()){
             return this.getCustomRowSection(data, cols, meta, pagingContent, globalData);
         } else {
             return this.getStandardGridSection(data, cols, meta, pagingContent, hasMorePages);
@@ -814,8 +846,12 @@ var Griddle = React.createClass({
         return (<GridNoData noDataMessage={this.props.noDataMessage} />);
     },
     shouldShowNoDataSection: function(results){
+        if (this.props.allowEmptyGrid) {
+          return false;
+        }
+
         return (this.props.useExternal === false && (typeof results === 'undefined' || results.length === 0 )) ||
-            (this.props.useExternal === true && this.props.externalIsLoading === false && results.length === 0)
+            (this.props.useExternal === true && this.props.externalIsLoading === false && results.length === 0);
     },
     render: function() {
         var that = this,
@@ -860,7 +896,7 @@ var Griddle = React.createClass({
 
         var gridClassName = this.props.gridClassName.length > 0 ? "griddle " + this.props.gridClassName : "griddle";
         //add custom to the class name so we can style it differently
-        gridClassName += this.props.useCustomRowComponent ? " griddle-custom" : "";
+        gridClassName += this.shouldUseCustomRowComponent() ? " griddle-custom" : "";
 
         return (
             <div className={gridClassName}>
